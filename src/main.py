@@ -105,7 +105,6 @@ async def province_dict(country_code:str):
         })
     return result
 
-# TODO: 实现天气预报
 @app.get('/weather/forecast/{city_id}')
 async def weather(city_id:str):
     # 定义中文键名到英文键名的映射
@@ -120,33 +119,58 @@ async def weather(city_id:str):
         '湿度': 'humidity',
         '云量': 'cloud_cover'
     }
+    baseUrl = 'https://weather.cma.cn'
     try:
         response = requests.get(f'https://weather.cma.cn/web/weather/{city_id}.html')
         if response.status_code == 200:
-            html_content = BeautifulSoup(response.content, 'lxml')
-            table = html_content.find('table', class_='hour-table')
-            rows = table.find_all('tr')
+            soup = BeautifulSoup(response.content, 'lxml')
+           # Find the div with id 'dayList'
+            day_list = soup.find('div', id='dayList')
 
-            # 获取时间列表（列标题）
-            time_slots = [td.text.strip() for td in rows[0].find_all('td')[1:]]
+            # Find all hour tables
+            hour_tables = soup.find_all('table', class_='hour-table')
 
-            # 初始化结果列表
-            result = [{} for _ in time_slots]
+            # Initialize the result list
+            weather_data = []
 
-            for row in rows:  # 跳过表头行
-                cells = row.find_all('td')
-                if cells:
-                    key = cells[0].text.strip().replace('', '').replace(' ', '')
-                    english_key = key_mapping.get(key, key)  # 使用映射获取英文键名
-                    for i, cell in enumerate(cells[1:]):
-                        if '天气' in key:
-                            value = cell.find('img')['src'].split('/')[-1] if cell.find('img') else ''
+            # Process each day's data
+            for day, hour_table in zip(day_list.find_all('div', class_=lambda x: x and 'pull-left day' in x), hour_tables):
+                day_data = {}
+                
+                # Extract day information
+                date_info = day.find('div', class_='day-item').text.strip().split('\n')
+                day_data['weekday'] = date_info[0].strip()
+                day_data['date'] = date_info[1].strip()
+                day_data['day_weather'] = day.find_all('div', class_='day-item')[2].text.strip()
+                day_data['day_wind'] = day.find_all('div', class_='day-item')[3].text.strip()
+                day_data['day_wind_strength'] = day.find_all('div', class_='day-item')[4].text.strip()
+                day_data['high_temp'] = day.find('div', class_='high').text.strip()
+                day_data['low_temp'] = day.find('div', class_='low').text.strip()
+                day_data['night_weather'] = day.find_all('div', class_='day-item')[-3].text.strip()
+                day_data['night_wind'] = day.find_all('div', class_='day-item')[-2].text.strip()
+                day_data['night_wind_strength'] = day.find_all('div', class_='day-item')[-1].text.strip()
+                
+                # Extract hourly data
+                hourly_data = []
+                rows = hour_table.find_all('tr')
+                headers = [th.text.strip() for th in rows[0].find_all('td')[1:]]
+                
+                for row in rows:
+                    cells = row.find_all('td')[1:]
+                    data_type = row.find('td').text.strip()
+                    for i, cell in enumerate(cells):
+                        if i >= len(hourly_data):
+                            hourly_data.append({})
+                        if data_type == '天气':
+                            hourly_data[i][key_mapping.get(data_type, data_type)] = baseUrl+cell.find('img')['src']
                         else:
-                            value = cell.text.strip()
-                        result[i][english_key] = value
+                            hourly_data[i][key_mapping.get(data_type, data_type)] = cell.text.strip()
+                
+                day_data['hourly_data'] = hourly_data
+                weather_data.append(day_data)
         
 
-            return result
+            return weather_data
         else:
             return {"message": "Error: " + str(response.status_code)}
     except requests.exceptions.RequestException as e:
